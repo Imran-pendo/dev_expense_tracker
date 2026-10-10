@@ -1,7 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { BpBox } from "@/shared/components/bp-box";
-import { createWorkspace } from "@/lib/db/repositories/workspaces.repo";
+import { pendo } from "@/shared/lib/pendo";
+import { createWorkspace, getWorkspacesByUserId } from "@/lib/db/repositories/workspaces.repo";
 import { seedDefaultCategories } from "@/lib/db/repositories/categories.repo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import { WorkspaceSetupForm, type WorkspaceFormValues } from "../components/workspace-setup-form";
@@ -22,9 +23,23 @@ export function WorkspaceSetupPage() {
         locale: values.locale,
         createdAt: new Date().toISOString(),
       };
+      // Returning users can also land here, so record whether this is really
+      // their first workspace (onboarding completion vs. an extra workspace).
+      const existingWorkspaces = await getWorkspacesByUserId(user.id);
       await createWorkspace(workspace);
-      await seedDefaultCategories(workspace.id);
+      const defaultCategoriesSeeded = await seedDefaultCategories(workspace.id);
       setActiveWorkspace(workspace);
+      pendo.track("workspace_created", {
+        workspaceId: workspace.id,
+        currency: workspace.currency,
+        locale: workspace.locale,
+        // Defaults preselected by WorkspaceSetupForm.
+        usedDefaultCurrency: workspace.currency === "USD",
+        usedDefaultLocale: workspace.locale === "en-US",
+        defaultCategoriesSeeded,
+        secondsSinceSignUp: Math.round((Date.now() - new Date(user.createdAt).getTime()) / 1000),
+        isFirstWorkspace: existingWorkspaces.length === 0,
+      });
       navigate("/", { replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create workspace");

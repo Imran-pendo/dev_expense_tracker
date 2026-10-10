@@ -1,9 +1,12 @@
+import { useEffect, useRef } from "react";
 import { Lightbulb } from "lucide-react";
 import { AppLayout } from "@/shared/components/app-layout";
 import { BpBox } from "@/shared/components/bp-box";
+import { pendo } from "@/shared/lib/pendo";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import { useInsights } from "../hooks/use-insights";
+import { BUDGET_ADHERENCE_LABEL, healthScoreLabel } from "../lib/insights-engine";
 import { ForecastCard } from "../components/forecast-card";
 import { HealthScoreCard } from "../components/health-score-card";
 import { AnomalyList } from "../components/anomaly-list";
@@ -13,6 +16,29 @@ import { LargestExpenses } from "../components/largest-expenses";
 export function InsightsPage() {
   const { workspace } = useAuthContext();
   const insights = useInsights(workspace!.id);
+
+  // Once per visit to this page: the ref resets when the page remounts (a new
+  // visit) but not when useDataChanged reloads the data (e.g. a Quick Add
+  // save). The dashboard's InsightsStrip shares the hook and is not tracked.
+  const hasTrackedVisitRef = useRef(false);
+  useEffect(() => {
+    if (insights.isLoading || !insights.hasTransactions || hasTrackedVisitRef.current) return;
+    hasTrackedVisitRef.current = true;
+    const topAnomaly = insights.anomalies[0];
+    const { vsBaseline, baselineAverage } = insights.forecast;
+    pendo.track("insights_generated", {
+      healthScore: insights.health.score,
+      healthLabel: healthScoreLabel(insights.health.score),
+      anomalyCount: insights.anomalies.length,
+      topAnomalyCategory: topAnomaly?.category.name ?? null,
+      topAnomalyRatio: topAnomaly ? Number(topAnomaly.ratio.toFixed(1)) : null,
+      forecastVsBaseline: vsBaseline !== null ? Number(vsBaseline.toFixed(2)) : null,
+      hasForecastBaseline: baselineAverage !== null,
+      hasBudgets: insights.health.components.some((c) => c.label === BUDGET_ADHERENCE_LABEL),
+      categoryDeltaCount: insights.deltas.length,
+      largestExpenseCount: insights.largest.length,
+    });
+  }, [insights]);
 
   const currency = workspace?.currency ?? "USD";
   const locale = workspace?.locale ?? "en-US";

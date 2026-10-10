@@ -7,8 +7,9 @@ import { getTransactionsByWorkspaceId, createTransaction } from "@/lib/db/reposi
 import { getCategoriesByWorkspaceId } from "@/lib/db/repositories/categories.repo";
 import { getGoalsByWorkspaceId, createGoal } from "@/lib/db/repositories/goals.repo";
 import { getBudgetsByWorkspaceId, upsertBudget } from "@/lib/db/repositories/budgets.repo";
+import { pendo } from "@/shared/lib/pendo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
-import type { Budget, Goal, Transaction } from "@/types";
+import type { Budget, Goal, Transaction, Workspace } from "@/types";
 
 export function DataExportImport() {
   const { workspace } = useAuthContext();
@@ -30,6 +31,15 @@ export function DataExportImport() {
       const data = { workspace, transactions, categories, goals, budgets, exportedAt: new Date().toISOString() };
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       downloadBlob(blob, `expense-tracker-export-${new Date().toISOString().slice(0, 10)}.json`);
+      // Export is the only way to back up this browser-local data.
+      pendo.track("data_exported", {
+        exportFormat: "json",
+        transactionCount: transactions.length,
+        categoryCount: categories.length,
+        goalCount: goals.length,
+        budgetCount: budgets.length,
+        fileSizeBytes: blob.size,
+      });
       toast.success("Exported successfully");
     } catch {
       toast.error("Export failed");
@@ -61,6 +71,13 @@ export function DataExportImport() {
       const csv = [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
       const blob = new Blob([csv], { type: "text/csv" });
       downloadBlob(blob, `transactions-${new Date().toISOString().slice(0, 10)}.csv`);
+      // CSV holds transactions only, so goal/budget counts don't apply.
+      pendo.track("data_exported", {
+        exportFormat: "csv",
+        transactionCount: transactions.length,
+        categoryCount: categories.length,
+        fileSizeBytes: blob.size,
+      });
       toast.success("CSV exported successfully");
     } catch {
       toast.error("CSV export failed");
@@ -74,9 +91,13 @@ export function DataExportImport() {
     if (!file || !workspace) return;
     setIsImporting(true);
 
+    // Declared outside the try so a failure can report how far a (non-atomic)
+    // import got before it stopped.
+    let imported = 0;
     try {
       const text = await file.text();
       const data = JSON.parse(text) as {
+        workspace?: Pick<Workspace, "id">;
         transactions: Transaction[];
         goals?: Goal[];
         budgets?: Budget[];
@@ -84,7 +105,6 @@ export function DataExportImport() {
 
       if (!Array.isArray(data.transactions)) throw new Error("Invalid format: missing transactions array");
 
-      let imported = 0;
       for (const tx of data.transactions) {
         const fresh: Transaction = {
           ...tx,
@@ -98,7 +118,7 @@ export function DataExportImport() {
       }
 
       // Optional sections from newer exports; older files simply lack them.
-      let extras = 0;
+      let goalsImported = 0;
       if (Array.isArray(data.goals)) {
         for (const goal of data.goals) {
           await createGoal({
@@ -107,15 +127,29 @@ export function DataExportImport() {
             workspaceId: workspace.id,
             contributions: (goal.contributions ?? []).map((c) => ({ ...c, id: crypto.randomUUID() })),
           });
-          extras++;
+          goalsImported++;
         }
       }
+      let budgetsImported = 0;
       if (Array.isArray(data.budgets)) {
         for (const budget of data.budgets) {
           await upsertBudget({ ...budget, id: crypto.randomUUID(), workspaceId: workspace.id });
-          extras++;
+          budgetsImported++;
         }
       }
+      const extras = goalsImported + budgetsImported;
+
+      // Every record gets a new id, so re-importing a file duplicates data;
+      // sameSourceWorkspace helps spot re-imports.
+      pendo.track("data_import_completed", {
+        transactionsImported: imported,
+        goalsImported,
+        budgetsImported,
+        hasGoalsSection: Array.isArray(data.goals),
+        hasBudgetsSection: Array.isArray(data.budgets),
+        fileSizeBytes: file.size,
+        sameSourceWorkspace: data.workspace?.id === workspace.id,
+      });
 
       toast.success(
         `Imported ${imported} transaction${imported !== 1 ? "s" : ""}${
@@ -123,7 +157,15 @@ export function DataExportImport() {
         }`
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Import failed — check the file format");
+      const message = err instanceof Error ? err.message : "Import failed — check the file format";
+      pendo.track("data_import_failed", {
+        // JSON.parse errors can quote the file's contents, so those aren't sent verbatim.
+        errorMessage: err instanceof SyntaxError ? "Invalid JSON" : message,
+        fileSizeBytes: file.size,
+        fileType: file.type,
+        transactionsImported: imported,
+      });
+      toast.error(message);
     } finally {
       setIsImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = "";

@@ -26,6 +26,13 @@ export interface BotProgress {
 
 export type LogFn = (p: BotProgress) => void;
 
+/** Run counters, updated as the run progresses so they are still accurate
+ *  when the run is stopped or ends in a fatal error. */
+export interface BotRunStats {
+  usersCreated: number;
+  errorCount: number;
+}
+
 interface BotState {
   isLoggedIn: boolean;
   hasWorkspace: boolean;
@@ -587,7 +594,8 @@ export async function runBot(
   iframe: HTMLIFrameElement,
   config: BotConfig,
   log: LogFn,
-  abortRef: React.MutableRefObject<boolean>
+  abortRef: React.MutableRefObject<boolean>,
+  stats: BotRunStats
 ): Promise<void> {
   const state: BotState = {
     isLoggedIn: false,
@@ -624,8 +632,11 @@ export async function runBot(
       await action.run(iframe, state, log, abortRef);
     } catch (err) {
       if (err instanceof AbortError) throw err;
+      stats.errorCount++;
       const msg = err instanceof Error ? err.message : String(err);
       log({ type: "error", message: `✗ ${action.name} failed: ${msg}` });
+    } finally {
+      stats.usersCreated = state.users.length;
     }
 
     checkAbort(abortRef);

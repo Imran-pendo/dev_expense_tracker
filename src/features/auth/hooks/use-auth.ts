@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { daysSince, identify, track } from "@/lib/analytics";
 import { hashPassword, verifyPassword } from "@/lib/crypto";
 import { getDB } from "@/lib/db/client";
 import { createUser, getUserByUsername } from "@/lib/db/repositories/users.repo";
@@ -21,6 +22,8 @@ interface AuthActions {
   setActiveWorkspace: (workspace: Workspace) => void;
   refreshUser: () => Promise<void>;
 }
+
+export const USERNAME_TAKEN_ERROR = "Username is already taken";
 
 export function useAuth(): AuthState & AuthActions {
   const [user, setUser] = useState<User | null>(null);
@@ -56,12 +59,13 @@ export function useAuth(): AuthState & AuthActions {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional session restore on mount
     loadSession();
   }, [loadSession]);
 
   const signUp = useCallback(async (username: string, displayName: string, password: string) => {
     const existing = await getUserByUsername(username);
-    if (existing) throw new Error("Username is already taken");
+    if (existing) throw new Error(USERNAME_TAKEN_ERROR);
 
     const { hash, salt } = await hashPassword(password);
     const initials = displayName
@@ -85,6 +89,9 @@ export function useAuth(): AuthState & AuthActions {
     setUser(newUser);
     const session: Session = { userId: newUser.id, workspaceId: "" };
     saveSession(session);
+    // Identify first so the event belongs to the new visitor, not the anonymous one.
+    identify(newUser.id);
+    track("user_signed_up", { signUpMethod: "local", createdAt: newUser.createdAt });
   }, []);
 
   const signIn = useCallback(async (username: string, password: string) => {
@@ -104,6 +111,13 @@ export function useAuth(): AuthState & AuthActions {
       workspaceId: activeWorkspace?.id ?? "",
     };
     saveSession(session);
+    identify(storedUser.id, activeWorkspace?.id);
+    // Tracked here rather than in SignInPage, whose hasWorkspace is stale until this resolves.
+    track("user_signed_in", {
+      hasWorkspace: activeWorkspace !== null,
+      workspaceCount: workspaces.length,
+      daysSinceSignUp: daysSince(storedUser.createdAt),
+    });
   }, []);
 
   const signOut = useCallback(() => {

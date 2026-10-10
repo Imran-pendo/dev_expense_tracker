@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/format";
+import { track } from "@/lib/analytics";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import { useBudgets } from "../hooks/use-budgets";
 import type { Category } from "@/types";
@@ -35,6 +36,14 @@ function BudgetRowForm({ category, currentLimit, currency, locale, onSave, onCle
     setIsSaving(true);
     try {
       await onSave(category.id, parsed);
+      track("budget_set", {
+        categoryId: category.id,
+        categoryName: category.name,
+        monthlyLimit: parsed,
+        previousLimit: currentLimit,
+        isNewBudget: currentLimit === null,
+        currency,
+      });
       toast.success(`Budget set for ${category.name}`);
     } catch {
       toast.error("Failed to save budget");
@@ -48,6 +57,12 @@ function BudgetRowForm({ category, currentLimit, currency, locale, onSave, onCle
     setIsSaving(true);
     try {
       await onClear();
+      track("budget_cleared", {
+        categoryId: category.id,
+        categoryName: category.name,
+        previousLimit: currentLimit,
+        currency,
+      });
       setValue("");
       toast.success(`Budget cleared for ${category.name}`);
     } catch {

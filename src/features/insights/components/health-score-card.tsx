@@ -1,13 +1,6 @@
 import { BpBox } from "@/shared/components/bp-box";
 import { Progress } from "@/components/ui/progress";
-import type { HealthScore } from "../lib/insights-engine";
-
-function scoreLabel(score: number): string {
-  if (score >= 80) return "Excellent";
-  if (score >= 60) return "Good";
-  if (score >= 40) return "Fair";
-  return "Needs attention";
-}
+import { healthScoreLabel, type HealthScore } from "../lib/insights-engine";
 
 export function HealthScoreCard({ health }: { health: HealthScore }) {
   return (
@@ -17,7 +10,7 @@ export function HealthScoreCard({ health }: { health: HealthScore }) {
           Financial Health
         </span>
         <span className="font-mono text-[10px] text-muted-foreground/40 uppercase tracking-widest">
-          {scoreLabel(health.score)}
+          {healthScoreLabel(health.score)}
         </span>
       </div>
       <div className="p-5 flex flex-col gap-4">

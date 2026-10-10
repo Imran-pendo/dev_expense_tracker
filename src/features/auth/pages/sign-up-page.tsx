@@ -1,7 +1,9 @@
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { errorMessageOf, track } from "@/lib/analytics";
 import { BpBox } from "@/shared/components/bp-box";
 import { useAuthContext } from "../hooks/auth-context";
+import { USERNAME_TAKEN_ERROR } from "../hooks/use-auth";
 import { SignUpForm } from "../components/sign-up-form";
 import type { SignUpFormValues } from "../schemas/auth.schema";
 
@@ -15,6 +17,11 @@ export function SignUpPage() {
       navigate("/setup-workspace", { replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Sign up failed");
+      // Never include the attempted username or password.
+      track("sign_up_failed", {
+        errorMessage: errorMessageOf(err, "Sign up failed"),
+        failureReason: err instanceof Error && err.message === USERNAME_TAKEN_ERROR ? "username_taken" : "unknown",
+      });
     }
   }
 

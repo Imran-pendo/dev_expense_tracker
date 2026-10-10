@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { track } from "@/lib/analytics";
 import {
   createAttachment,
   deleteAttachment,
@@ -31,15 +32,23 @@ export interface UseAttachmentsReturn {
   reload: () => Promise<void>;
 }
 
-function validateFile(file: File, currentCount: number): string | null {
+interface FileRejection {
+  reason: "max_files_reached" | "unsupported_type" | "file_too_large";
+  message: string;
+}
+
+function validateFile(file: File, currentCount: number): FileRejection | null {
   if (currentCount >= MAX_FILES_PER_TRANSACTION) {
-    return `Maximum ${MAX_FILES_PER_TRANSACTION} attachments per transaction`;
+    return {
+      reason: "max_files_reached",
+      message: `Maximum ${MAX_FILES_PER_TRANSACTION} attachments per transaction`,
+    };
   }
   if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
-    return `${file.name}: only images and PDFs are supported`;
+    return { reason: "unsupported_type", message: `${file.name}: only images and PDFs are supported` };
   }
   if (file.size > MAX_FILE_SIZE) {
-    return `${file.name}: file is larger than 5 MB`;
+    return { reason: "file_too_large", message: `${file.name}: file is larger than 5 MB` };
   }
   return null;
 }
@@ -57,6 +66,7 @@ export function useAttachments(workspaceId: string, transactionId: string | null
   }, [transactionId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional load on mount
     reload();
   }, [reload]);
 
@@ -66,9 +76,18 @@ export function useAttachments(workspaceId: string, transactionId: string | null
     async (files: FileList | File[]) => {
       let count = totalCount;
       for (const file of Array.from(files)) {
-        const error = validateFile(file, count);
-        if (error) {
-          toast.error(error);
+        const rejection = validateFile(file, count);
+        if (rejection) {
+          toast.error(rejection.message);
+          track("receipt_upload_rejected", {
+            rejectionReason: rejection.reason,
+            mimeType: file.type || "unknown",
+            fileSizeBytes: file.size,
+            currentAttachmentCount: count,
+            maxFileSizeBytes: MAX_FILE_SIZE,
+            maxFilesPerTransaction: MAX_FILES_PER_TRANSACTION,
+            attachmentFlow: transactionId ? "existing_transaction" : "new_transaction",
+          });
           continue;
         }
         count++;
@@ -82,6 +101,13 @@ export function useAttachments(workspaceId: string, transactionId: string | null
             size: file.size,
             blob: file,
             createdAt: new Date().toISOString(),
+          });
+          track("receipt_attached", {
+            transactionId,
+            mimeType: file.type,
+            fileSizeBytes: file.size,
+            attachmentFlow: "existing_transaction",
+            attachmentCountAfter: count,
           });
         } else {
           setStagedFiles((prev) => [...prev, { id: crypto.randomUUID(), file }]);
@@ -106,7 +132,7 @@ export function useAttachments(workspaceId: string, transactionId: string | null
 
   const flushStaged = useCallback(
     async (newTransactionId: string) => {
-      for (const staged of stagedFiles) {
+      for (const [index, staged] of stagedFiles.entries()) {
         await createAttachment({
           id: staged.id,
           workspaceId,
@@ -116,6 +142,13 @@ export function useAttachments(workspaceId: string, transactionId: string | null
           size: staged.file.size,
           blob: staged.file,
           createdAt: new Date().toISOString(),
+        });
+        track("receipt_attached", {
+          transactionId: newTransactionId,
+          mimeType: staged.file.type,
+          fileSizeBytes: staged.file.size,
+          attachmentFlow: "new_transaction",
+          attachmentCountAfter: index + 1,
         });
       }
       setStagedFiles([]);

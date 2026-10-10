@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from "react";
-import { runBot, type BotProgress, type BotConfig } from "../lib/bot-runner";
+import { runBot, createBotRunSummary, type BotProgress, type BotConfig } from "../lib/bot-runner";
 import { AbortError } from "../lib/dom-helpers";
+import { track } from "@/lib/analytics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,20 +29,38 @@ export function BotPage() {
     setRunState("running");
 
     const config: BotConfig = { totalActions };
+    const summary = createBotRunSummary();
+    const startedAt = Date.now();
+    let runOutcome: "done" | "stopped" | "error" = "done";
 
     try {
-      await runBot(iframeRef.current, config, appendLog, abortRef);
+      await runBot(iframeRef.current, config, appendLog, abortRef, summary);
       setRunState("done");
     } catch (err) {
       if (err instanceof AbortError) {
+        runOutcome = "stopped";
         appendLog({ type: "info", message: "Bot stopped by user." });
         setRunState("stopped");
       } else {
+        runOutcome = "error";
         const msg = err instanceof Error ? err.message : String(err);
         appendLog({ type: "error", message: `Fatal error: ${msg}` });
         setRunState("done");
       }
     }
+
+    // Bot runs create synthetic visitor activity; this marks each run so it can
+    // be separated from real usage, and failing action names expose broken selectors.
+    const results = Object.entries(summary.actionResults);
+    track("usage_bot_run_completed", {
+      runOutcome,
+      totalActionsConfigured: config.totalActions,
+      actionsSucceeded: results.reduce((sum, [, counts]) => sum + counts.succeeded, 0),
+      actionsFailed: results.reduce((sum, [, counts]) => sum + counts.failed, 0),
+      usersCreated: summary.usersCreated,
+      durationMs: Date.now() - startedAt,
+      failedActionNames: results.filter(([, counts]) => counts.failed > 0).map(([name]) => name),
+    });
   }
 
   function handleStop() {

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { changedFields, track } from "@/lib/analytics";
 import { updateWorkspace } from "@/lib/db/repositories/workspaces.repo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import type { Workspace } from "@/types";
@@ -65,6 +66,14 @@ export function WorkspaceForm() {
       const updated: Workspace = { ...workspace, ...values };
       await updateWorkspace(updated);
       setActiveWorkspace(updated);
+      // A currency change only relabels existing amounts; nothing is converted.
+      track("workspace_settings_updated", {
+        changedFields: changedFields(workspace, updated, ["name", "currency", "locale"]),
+        previousCurrency: workspace.currency,
+        currency: updated.currency,
+        previousLocale: workspace.locale,
+        locale: updated.locale,
+      });
       toast.success("Workspace settings saved");
     } catch {
       toast.error("Failed to save workspace settings");

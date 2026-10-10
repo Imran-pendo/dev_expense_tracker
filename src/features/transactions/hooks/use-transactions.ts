@@ -9,21 +9,37 @@ import { toast } from "sonner";
 import { getCategoriesByWorkspaceId } from "@/lib/db/repositories/categories.repo";
 import { getBudgetsByWorkspaceId } from "@/lib/db/repositories/budgets.repo";
 import { checkBudgetThresholds } from "@/features/budgets/lib/budget-alerts";
+import { round2, track } from "@/lib/analytics";
 import { useDataChanged } from "@/shared/lib/data-events";
 import type { Category, Transaction } from "@/types";
+
+/** The flow that saved the expense which crossed a budget threshold. */
+export type BudgetAlertTriggerSource = "transaction_add" | "transaction_edit" | "quick_add";
 
 export async function notifyBudgetThreshold(
   workspaceId: string,
   tx: Pick<Transaction, "type" | "categoryId" | "amount" | "date">,
   priorTransactions: Transaction[],
-  categories: Category[]
+  categories: Category[],
+  triggerSource: BudgetAlertTriggerSource
 ): Promise<void> {
   if (tx.type !== "expense") return;
   const budgets = await getBudgetsByWorkspaceId(workspaceId);
   const alert = checkBudgetThresholds(tx, budgets, priorTransactions);
   if (!alert) return;
-  const categoryName = categories.find((c) => c.id === alert.categoryId)?.name ?? "Category";
+  const category = categories.find((c) => c.id === alert.categoryId);
+  const categoryName = category?.name ?? "Category";
   const percent = Math.round((alert.spent / alert.monthlyLimit) * 100);
+  track("budget_threshold_alert_triggered", {
+    alertLevel: alert.level,
+    categoryId: alert.categoryId,
+    categoryName: category?.name,
+    percentUsed: percent,
+    spent: round2(alert.spent),
+    monthlyLimit: alert.monthlyLimit,
+    transactionAmount: tx.amount,
+    triggerSource,
+  });
   if (alert.level === "over") {
     toast.error(`Budget exceeded: ${categoryName} is at ${percent}% of its monthly limit`);
   } else {
@@ -66,6 +82,7 @@ export function useTransactions(workspaceId: string): UseTransactionsReturn {
   }, [workspaceId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional load on mount
     reload();
   }, [reload]);
 
@@ -87,7 +104,7 @@ export function useTransactions(workspaceId: string): UseTransactionsReturn {
       const now = new Date().toISOString();
       const full: Transaction = { ...tx, id: crypto.randomUUID(), createdAt: now, updatedAt: now };
       await createTransaction(full);
-      await notifyBudgetThreshold(workspaceId, full, transactions, categories);
+      await notifyBudgetThreshold(workspaceId, full, transactions, categories, "transaction_add");
       await reload();
       return full;
     },
@@ -100,7 +117,7 @@ export function useTransactions(workspaceId: string): UseTransactionsReturn {
       await updateTransaction(updated);
       // Exclude the pre-edit version so the threshold check sees the change.
       const priorWithoutTx = transactions.filter((t) => t.id !== tx.id);
-      await notifyBudgetThreshold(workspaceId, updated, priorWithoutTx, categories);
+      await notifyBudgetThreshold(workspaceId, updated, priorWithoutTx, categories, "transaction_edit");
       await reload();
     },
     [workspaceId, transactions, categories, reload]

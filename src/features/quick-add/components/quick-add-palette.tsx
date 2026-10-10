@@ -4,19 +4,21 @@ import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
-import { useQuickAdd } from "../hooks/use-quick-add";
+import { useQuickAdd, type QuickAddOpenMethod } from "../hooks/use-quick-add";
 
 interface QuickAddPaletteProps {
   open: boolean;
+  openMethod: QuickAddOpenMethod;
   onOpenChange: (open: boolean) => void;
 }
 
-export function QuickAddPalette({ open, onOpenChange }: QuickAddPaletteProps) {
+export function QuickAddPalette({ open, openMethod, onOpenChange }: QuickAddPaletteProps) {
   const { workspace } = useAuthContext();
-  const quickAdd = useQuickAdd(workspace!.id, open);
 
   const currency = workspace?.currency ?? "USD";
   const locale = workspace?.locale ?? "en-US";
+
+  const quickAdd = useQuickAdd(workspace!.id, open, { openMethod, currency });
 
   const { parsed, effectiveCategory } = quickAdd;
   const hasInput = quickAdd.input.trim().length > 0;

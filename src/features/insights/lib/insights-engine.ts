@@ -52,6 +52,15 @@ export interface HealthScoreComponent {
 export interface HealthScore {
   score: number;
   components: HealthScoreComponent[];
+  /** Whether budget adherence is part of the score (only when budgets exist). */
+  hasBudgets: boolean;
+}
+
+export function healthScoreLabel(score: number): string {
+  if (score >= 80) return "Excellent";
+  if (score >= 60) return "Good";
+  if (score >= 40) return "Fair";
+  return "Needs attention";
 }
 
 function monthExpensesByCategory(transactions: Transaction[], monthOf: Date): Map<string, number> {
@@ -278,5 +287,5 @@ export function computeHealthScore(
   });
 
   const score = components.reduce((sum, c) => sum + c.points, 0);
-  return { score, components };
+  return { score, components, hasBudgets };
 }

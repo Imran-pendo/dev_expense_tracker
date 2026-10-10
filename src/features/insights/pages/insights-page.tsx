@@ -1,9 +1,12 @@
+import { useEffect, useRef } from "react";
 import { Lightbulb } from "lucide-react";
 import { AppLayout } from "@/shared/components/app-layout";
 import { BpBox } from "@/shared/components/bp-box";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
+import { round2, track } from "@/lib/analytics";
 import { useInsights } from "../hooks/use-insights";
+import { healthScoreLabel } from "../lib/insights-engine";
 import { ForecastCard } from "../components/forecast-card";
 import { HealthScoreCard } from "../components/health-score-card";
 import { AnomalyList } from "../components/anomaly-list";
@@ -13,6 +16,31 @@ import { LargestExpenses } from "../components/largest-expenses";
 export function InsightsPage() {
   const { workspace } = useAuthContext();
   const insights = useInsights(workspace!.id);
+
+  // Once per visit, after the first load. The ref resets on remount (a new
+  // visit) but keeps data-changed reloads from firing the event again.
+  const hasTrackedReportRef = useRef(false);
+  useEffect(() => {
+    if (insights.isLoading || hasTrackedReportRef.current) return;
+    hasTrackedReportRef.current = true;
+    const { anomalies, forecast, health } = insights;
+    if (!insights.hasTransactions) {
+      // The empty state shows no report, so the placeholder results aren't sent.
+      track("insights_report_generated", { hasTransactions: false, hasBudgets: health.hasBudgets });
+      return;
+    }
+    track("insights_report_generated", {
+      hasTransactions: true,
+      healthScore: health.score,
+      healthScoreLabel: healthScoreLabel(health.score),
+      anomalyCount: anomalies.length,
+      topAnomalyCategory: anomalies[0]?.category.name,
+      topAnomalyRatio: anomalies.length > 0 ? round2(anomalies[0].ratio) : undefined,
+      forecastVsBaseline: forecast.vsBaseline !== null ? round2(forecast.vsBaseline) : undefined,
+      hasForecastBaseline: forecast.baselineAverage !== null,
+      hasBudgets: health.hasBudgets,
+    });
+  }, [insights]);
 
   const currency = workspace?.currency ?? "USD";
   const locale = workspace?.locale ?? "en-US";

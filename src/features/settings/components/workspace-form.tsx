@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { updateWorkspace } from "@/lib/db/repositories/workspaces.repo";
+import { pendo } from "@/shared/lib/pendo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import type { Workspace } from "@/types";
 
@@ -18,6 +19,9 @@ const workspaceSchema = z.object({
 });
 
 type WorkspaceFormValues = z.infer<typeof workspaceSchema>;
+
+// Fields compared to build workspace_settings_updated's changedFields.
+const EDITABLE_WORKSPACE_FIELDS = ["name", "currency", "locale"] as const;
 
 const CURRENCIES = [
   { code: "USD", label: "US Dollar (USD)" },
@@ -65,6 +69,20 @@ export function WorkspaceForm() {
       const updated: Workspace = { ...workspace, ...values };
       await updateWorkspace(updated);
       setActiveWorkspace(updated);
+      // Changing currency relabels/reformats every amount without converting
+      // it, so record before/after values. The workspace name is not sent.
+      const changedFields = EDITABLE_WORKSPACE_FIELDS.filter((field) => workspace[field] !== updated[field]);
+      pendo.track("workspace_settings_updated", {
+        workspaceId: workspace.id,
+        changedFields: changedFields.join(","),
+        nameChanged: workspace.name !== updated.name,
+        currencyChanged: workspace.currency !== updated.currency,
+        previousCurrency: workspace.currency,
+        currency: updated.currency,
+        localeChanged: workspace.locale !== updated.locale,
+        previousLocale: workspace.locale,
+        locale: updated.locale,
+      });
       toast.success("Workspace settings saved");
     } catch {
       toast.error("Failed to save workspace settings");

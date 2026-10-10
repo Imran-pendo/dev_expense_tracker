@@ -12,10 +12,11 @@ import type { Goal, GoalContribution } from "@/types";
 export interface UseGoalsReturn {
   goals: Goal[];
   isLoading: boolean;
-  addGoal: (goal: Omit<Goal, "id" | "contributions" | "createdAt" | "updatedAt">) => Promise<void>;
+  addGoal: (goal: Omit<Goal, "id" | "contributions" | "createdAt" | "updatedAt">) => Promise<Goal>;
   editGoal: (goal: Goal) => Promise<void>;
   removeGoal: (id: string) => Promise<void>;
-  contribute: (goalId: string, contribution: Omit<GoalContribution, "id">) => Promise<void>;
+  /** Resolves with the goal as saved, including the new contribution. */
+  contribute: (goalId: string, contribution: Omit<GoalContribution, "id">) => Promise<Goal>;
   reload: () => Promise<void>;
 }
 
@@ -33,6 +34,7 @@ export function useGoals(workspaceId: string): UseGoalsReturn {
   }, [workspaceId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- existing load-on-mount pattern
     reload();
   }, [reload]);
 
@@ -41,14 +43,16 @@ export function useGoals(workspaceId: string): UseGoalsReturn {
   const addGoal = useCallback(
     async (goal: Omit<Goal, "id" | "contributions" | "createdAt" | "updatedAt">) => {
       const now = new Date().toISOString();
-      await createGoal({
+      const created: Goal = {
         ...goal,
         id: crypto.randomUUID(),
         contributions: [],
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      await createGoal(created);
       await reload();
+      return created;
     },
     [reload]
   );
@@ -71,8 +75,9 @@ export function useGoals(workspaceId: string): UseGoalsReturn {
 
   const contribute = useCallback(
     async (goalId: string, contribution: Omit<GoalContribution, "id">) => {
-      await addContribution(goalId, { ...contribution, id: crypto.randomUUID() });
+      const updated = await addContribution(goalId, { ...contribution, id: crypto.randomUUID() });
       await reload();
+      return updated;
     },
     [reload]
   );

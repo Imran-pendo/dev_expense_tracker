@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { pendo } from "@/shared/lib/pendo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import { useQuickAdd } from "../hooks/use-quick-add";
 
@@ -13,10 +14,11 @@ interface QuickAddPaletteProps {
 
 export function QuickAddPalette({ open, onOpenChange }: QuickAddPaletteProps) {
   const { workspace } = useAuthContext();
-  const quickAdd = useQuickAdd(workspace!.id, open);
 
   const currency = workspace?.currency ?? "USD";
   const locale = workspace?.locale ?? "en-US";
+
+  const quickAdd = useQuickAdd(workspace!.id, open, currency);
 
   const { parsed, effectiveCategory } = quickAdd;
   const hasInput = quickAdd.input.trim().length > 0;
@@ -30,6 +32,18 @@ export function QuickAddPalette({ open, onOpenChange }: QuickAddPaletteProps) {
     if (e.key === "Enter" && quickAdd.canSave) {
       e.preventDefault();
       quickAdd.save();
+    } else if (e.key === "Enter" && hasInput && !quickAdd.isSaving && !e.repeat) {
+      // Enter was ignored because the parser found no amount or no category.
+      // Keystrokes aren't auto-captured, so this is the only parser-failure
+      // signal. Raw input is never sent; e.repeat skips held-down Enter.
+      pendo.track("quick_add_save_blocked", {
+        missingAmount: parsed.amount === null,
+        missingCategory: effectiveCategory === null,
+        inputLength: quickAdd.input.trim().length,
+        dateExplicit: parsed.dateExplicit,
+        typeExplicit: parsed.typeExplicit,
+        categoryCount: quickAdd.categories.length,
+      });
     }
   }
 

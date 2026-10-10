@@ -21,7 +21,7 @@ export async function deleteCategory(id: string): Promise<void> {
   await db.delete("categories", id);
 }
 
-export async function seedDefaultCategories(workspaceId: string): Promise<void> {
+export async function seedDefaultCategories(workspaceId: string): Promise<number> {
   const defaults: Category[] = [
     { id: crypto.randomUUID(), workspaceId, name: "Food & Dining", color: "#f97316", scope: "expense", isDefault: true },
     { id: crypto.randomUUID(), workspaceId, name: "Transport", color: "#3b82f6", scope: "expense", isDefault: true },
@@ -40,4 +40,5 @@ export async function seedDefaultCategories(workspaceId: string): Promise<void> 
   const db = await getDB();
   const tx = db.transaction("categories", "readwrite");
   await Promise.all([...defaults.map((c) => tx.store.add(c)), tx.done]);
+  return defaults.length;
 }

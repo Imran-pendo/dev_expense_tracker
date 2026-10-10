@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback } from "react";
-import { runBot, type BotProgress, type BotConfig } from "../lib/bot-runner";
+import { runBot, type BotProgress, type BotConfig, type BotRunStats } from "../lib/bot-runner";
 import { AbortError } from "../lib/dom-helpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { pendo } from "@/shared/lib/pendo";
 import { Bot, Play, Square } from "lucide-react";
 
 type RunState = "idle" | "running" | "done" | "stopped";
@@ -28,20 +29,35 @@ export function BotPage() {
     setRunState("running");
 
     const config: BotConfig = { totalActions };
+    const stats: BotRunStats = { usersCreated: 0, errorCount: 0 };
+    const startedAt = Date.now();
+    let outcome: "completed" | "stopped" | "failed" = "completed";
 
     try {
-      await runBot(iframeRef.current, config, appendLog, abortRef);
+      await runBot(iframeRef.current, config, appendLog, abortRef, stats);
       setRunState("done");
     } catch (err) {
       if (err instanceof AbortError) {
+        outcome = "stopped";
         appendLog({ type: "info", message: "Bot stopped by user." });
         setRunState("stopped");
       } else {
+        outcome = "failed";
         const msg = err instanceof Error ? err.message : String(err);
         appendLog({ type: "error", message: `Fatal error: ${msg}` });
         setRunState("done");
       }
     }
+
+    // The bot creates synthetic sign-ups, workspaces and transactions; this
+    // lets that activity be separated from real usage.
+    pendo.track("usage_bot_run_finished", {
+      outcome,
+      totalActions: config.totalActions,
+      usersCreated: stats.usersCreated,
+      errorCount: stats.errorCount,
+      durationMs: Date.now() - startedAt,
+    });
   }
 
   function handleStop() {

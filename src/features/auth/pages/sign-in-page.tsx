@@ -1,7 +1,9 @@
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { BpBox } from "@/shared/components/bp-box";
+import { pendo } from "@/shared/lib/pendo";
 import { useAuthContext } from "../hooks/auth-context";
+import { AuthError } from "../hooks/use-auth";
 import { SignInForm } from "../components/sign-in-form";
 import type { SignInFormValues } from "../schemas/auth.schema";
 
@@ -14,7 +16,14 @@ export function SignInPage() {
       await signIn(values.username, values.password);
       navigate(hasWorkspace ? "/" : "/setup-workspace", { replace: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Sign in failed");
+      const errorMessage = err instanceof Error ? err.message : "Sign in failed";
+      // The UI message is identical for both cases; the reason separates an
+      // unknown username (often a different device/browser) from a bad password.
+      pendo.track("user_sign_in_failed", {
+        errorMessage,
+        failureReason: err instanceof AuthError ? err.reason : "unknown",
+      });
+      toast.error(errorMessage);
     }
   }
 

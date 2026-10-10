@@ -5,6 +5,7 @@ import {
   deleteAttachment,
   getAttachmentsByTransactionId,
 } from "@/lib/db/repositories/attachments.repo";
+import { pendo } from "@/shared/lib/pendo";
 import type { Attachment } from "@/types";
 
 export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB per file
@@ -31,17 +32,36 @@ export interface UseAttachmentsReturn {
   reload: () => Promise<void>;
 }
 
-function validateFile(file: File, currentCount: number): string | null {
+interface FileRejection {
+  reason: "max_files_reached" | "unsupported_type" | "file_too_large";
+  message: string;
+}
+
+function validateFile(file: File, currentCount: number): FileRejection | null {
   if (currentCount >= MAX_FILES_PER_TRANSACTION) {
-    return `Maximum ${MAX_FILES_PER_TRANSACTION} attachments per transaction`;
+    return {
+      reason: "max_files_reached",
+      message: `Maximum ${MAX_FILES_PER_TRANSACTION} attachments per transaction`,
+    };
   }
   if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
-    return `${file.name}: only images and PDFs are supported`;
+    return { reason: "unsupported_type", message: `${file.name}: only images and PDFs are supported` };
   }
   if (file.size > MAX_FILE_SIZE) {
-    return `${file.name}: file is larger than 5 MB`;
+    return { reason: "file_too_large", message: `${file.name}: file is larger than 5 MB` };
   }
   return null;
+}
+
+// Aggregate analytics for a batch of saved receipts. File names may contain
+// PII, so only types and sizes are reported.
+function receiptBatchStats(files: File[]) {
+  return {
+    fileCount: files.length,
+    imageCount: files.filter((f) => f.type.startsWith("image/")).length,
+    pdfCount: files.filter((f) => f.type === "application/pdf").length,
+    totalSizeBytes: files.reduce((sum, f) => sum + f.size, 0),
+  };
 }
 
 export function useAttachments(workspaceId: string, transactionId: string | null): UseAttachmentsReturn {
@@ -57,6 +77,7 @@ export function useAttachments(workspaceId: string, transactionId: string | null
   }, [transactionId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- existing load-on-mount pattern
     reload();
   }, [reload]);
 
@@ -64,11 +85,20 @@ export function useAttachments(workspaceId: string, transactionId: string | null
 
   const addFiles = useCallback(
     async (files: FileList | File[]) => {
+      const flow = transactionId ? "existing_transaction" : "new_transaction";
+      const written: File[] = [];
       let count = totalCount;
       for (const file of Array.from(files)) {
-        const error = validateFile(file, count);
-        if (error) {
-          toast.error(error);
+        const rejection = validateFile(file, count);
+        if (rejection) {
+          pendo.track("receipt_upload_rejected", {
+            rejectionReason: rejection.reason,
+            mimeType: file.type,
+            fileSizeBytes: file.size,
+            currentCount: count,
+            flow,
+          });
+          toast.error(rejection.message);
           continue;
         }
         count++;
@@ -83,11 +113,21 @@ export function useAttachments(workspaceId: string, transactionId: string | null
             blob: file,
             createdAt: new Date().toISOString(),
           });
+          written.push(file);
         } else {
           setStagedFiles((prev) => [...prev, { id: crypto.randomUUID(), file }]);
         }
       }
       if (transactionId) await reload();
+      // Staged files (new transaction) are tracked when flushStaged writes them.
+      if (transactionId && written.length > 0) {
+        pendo.track("receipts_attached", {
+          transactionId,
+          flow,
+          ...receiptBatchStats(written),
+          totalAttachmentCount: count,
+        });
+      }
     },
     [workspaceId, transactionId, totalCount, reload]
   );
@@ -116,6 +156,14 @@ export function useAttachments(workspaceId: string, transactionId: string | null
           size: staged.file.size,
           blob: staged.file,
           createdAt: new Date().toISOString(),
+        });
+      }
+      if (stagedFiles.length > 0) {
+        pendo.track("receipts_attached", {
+          transactionId: newTransactionId,
+          flow: "new_transaction",
+          ...receiptBatchStats(stagedFiles.map((s) => s.file)),
+          totalAttachmentCount: stagedFiles.length,
         });
       }
       setStagedFiles([]);

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/format";
+import { pendo } from "@/shared/lib/pendo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import { useBudgets } from "../hooks/use-budgets";
 import type { Category } from "@/types";
@@ -35,6 +36,15 @@ function BudgetRowForm({ category, currentLimit, currency, locale, onSave, onCle
     setIsSaving(true);
     try {
       await onSave(category.id, parsed);
+      // saveBudget upserts, so this covers both a first limit and an adjustment.
+      pendo.track("budget_set", {
+        categoryId: category.id,
+        categoryName: category.name,
+        monthlyLimit: parsed,
+        previousLimit: currentLimit,
+        isNewBudget: currentLimit === null,
+        currency,
+      });
       toast.success(`Budget set for ${category.name}`);
     } catch {
       toast.error("Failed to save budget");
@@ -49,6 +59,12 @@ function BudgetRowForm({ category, currentLimit, currency, locale, onSave, onCle
     try {
       await onClear();
       setValue("");
+      pendo.track("budget_cleared", {
+        categoryId: category.id,
+        categoryName: category.name,
+        previousLimit: currentLimit,
+        currency,
+      });
       toast.success(`Budget cleared for ${category.name}`);
     } catch {
       toast.error("Failed to clear budget");

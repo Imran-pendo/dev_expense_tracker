@@ -4,6 +4,7 @@ import { createTransaction, getTransactionsByWorkspaceId } from "@/lib/db/reposi
 import { getCategoriesByWorkspaceId } from "@/lib/db/repositories/categories.repo";
 import { notifyBudgetThreshold } from "@/features/transactions/hooks/use-transactions";
 import { emitDataChanged } from "@/shared/lib/data-events";
+import { pendo } from "@/shared/lib/pendo";
 import { parseQuickAdd, type ParsedQuickAdd } from "../lib/parser";
 import type { Category, Transaction } from "@/types";
 
@@ -21,7 +22,7 @@ export interface UseQuickAddReturn {
   save: () => Promise<void>;
 }
 
-export function useQuickAdd(workspaceId: string, open: boolean): UseQuickAddReturn {
+export function useQuickAdd(workspaceId: string, open: boolean, currency: string): UseQuickAddReturn {
   const [input, setInput] = useState("");
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -32,6 +33,7 @@ export function useQuickAdd(workspaceId: string, open: boolean): UseQuickAddRetu
   // Lazy-load history on first open; reset the input each time it opens.
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- existing reset-on-open pattern
     setInput("");
     setOverrideCategory(null);
     if (hasLoaded) return;
@@ -80,7 +82,25 @@ export function useQuickAdd(workspaceId: string, open: boolean): UseQuickAddRetu
         updatedAt: now,
       };
       await createTransaction(tx);
-      await notifyBudgetThreshold(workspaceId, tx, transactions, categories);
+      await notifyBudgetThreshold(workspaceId, tx, transactions, categories, "quick_add");
+      // Enter-to-save in a keyboard-opened palette is invisible to click
+      // capture, so this is the main Quick Add adoption signal.
+      pendo.track("quick_add_transaction_created", {
+        transactionId: tx.id,
+        type: tx.type,
+        amount: tx.amount,
+        currency,
+        categoryId: tx.categoryId,
+        categoryName: effectiveCategory.name,
+        categorySource: overrideCategory ? "override" : parsed.categoryGuessed ? "fallback_guess" : "inferred",
+        categoryOverridden: overrideCategory !== null,
+        categoryGuessed: parsed.categoryGuessed,
+        dateExplicit: parsed.dateExplicit,
+        typeExplicit: parsed.typeExplicit,
+        hasDescription: parsed.description.length > 0,
+        historySize: transactions.length,
+        isFirstTransaction: transactions.length === 0,
+      });
       // Keep local history fresh so the next entry's inference sees this one.
       setTransactions((prev) => [tx, ...prev]);
       setInput("");
@@ -92,7 +112,7 @@ export function useQuickAdd(workspaceId: string, open: boolean): UseQuickAddRetu
     } finally {
       setIsSaving(false);
     }
-  }, [parsed, effectiveCategory, overrideCategory, workspaceId, transactions, categories]);
+  }, [parsed, effectiveCategory, overrideCategory, workspaceId, currency, transactions, categories]);
 
   return {
     input,

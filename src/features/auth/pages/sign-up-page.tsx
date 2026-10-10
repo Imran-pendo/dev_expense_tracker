@@ -1,7 +1,9 @@
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { BpBox } from "@/shared/components/bp-box";
+import { pendo } from "@/shared/lib/pendo";
 import { useAuthContext } from "../hooks/auth-context";
+import { AuthError } from "../hooks/use-auth";
 import { SignUpForm } from "../components/sign-up-form";
 import type { SignUpFormValues } from "../schemas/auth.schema";
 
@@ -14,7 +16,13 @@ export function SignUpPage() {
       await signUp(values.username, values.displayName, values.password);
       navigate("/setup-workspace", { replace: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Sign up failed");
+      const errorMessage = err instanceof Error ? err.message : "Sign up failed";
+      // Zod validation errors never reach onSubmit, so these are real rejections.
+      pendo.track("user_sign_up_failed", {
+        errorMessage,
+        failureReason: err instanceof AuthError ? err.reason : "unknown",
+      });
+      toast.error(errorMessage);
     }
   }
 

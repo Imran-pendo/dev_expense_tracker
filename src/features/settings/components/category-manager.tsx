@@ -23,6 +23,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createCategory, deleteCategory, updateCategory } from "@/lib/db/repositories/categories.repo";
+import { pendo } from "@/shared/lib/pendo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import { useCategories } from "../hooks/use-settings";
 import type { Category, CategoryScope } from "@/types";
@@ -39,6 +40,9 @@ const PRESET_COLORS = [
   "#ef4444", "#f97316", "#f59e0b", "#22c55e", "#06b6d4",
   "#3b82f6", "#8b5cf6", "#ec4899", "#6b7280", "#84cc16",
 ];
+
+// Fields compared to build category_updated's changedFields.
+const EDITABLE_CATEGORY_FIELDS = ["name", "color", "scope"] as const;
 
 interface CategoryFormDialogProps {
   open: boolean;
@@ -150,6 +154,8 @@ export function CategoryManager() {
   const [deletingCat, setDeletingCat] = useState<Category | null>(null);
 
   async function handleAdd(values: CategoryFormValues) {
+    // Custom categories (including this one) show where the default set falls short.
+    const customCategoryCount = categories.filter((c) => !c.isDefault).length + 1;
     try {
       const cat: Category = {
         id: crypto.randomUUID(),
@@ -159,6 +165,13 @@ export function CategoryManager() {
       };
       await createCategory(cat);
       await reload();
+      pendo.track("category_created", {
+        categoryId: cat.id,
+        categoryName: cat.name,
+        scope: cat.scope,
+        color: cat.color,
+        customCategoryCount,
+      });
       setShowForm(false);
       toast.success("Category added");
     } catch {
@@ -169,8 +182,19 @@ export function CategoryManager() {
   async function handleEdit(values: CategoryFormValues) {
     if (!editingCat) return;
     try {
-      await updateCategory({ ...editingCat, ...values });
+      const updated: Category = { ...editingCat, ...values };
+      await updateCategory(updated);
       await reload();
+      const changedFields = EDITABLE_CATEGORY_FIELDS.filter((field) => editingCat[field] !== updated[field]);
+      // isDefault = true means one of the seeded default categories was edited.
+      pendo.track("category_updated", {
+        categoryId: editingCat.id,
+        isDefault: editingCat.isDefault,
+        changedFields: changedFields.join(","),
+        nameChanged: editingCat.name !== updated.name,
+        scope: updated.scope,
+        previousScope: editingCat.scope,
+      });
       setEditingCat(null);
       toast.success("Category updated");
     } catch {
@@ -180,9 +204,18 @@ export function CategoryManager() {
 
   async function handleDelete() {
     if (!deletingCat) return;
+    const customCategoryCountRemaining = categories.filter(
+      (c) => !c.isDefault && c.id !== deletingCat.id
+    ).length;
     try {
       await deleteCategory(deletingCat.id);
       await reload();
+      pendo.track("category_deleted", {
+        categoryId: deletingCat.id,
+        categoryName: deletingCat.name,
+        scope: deletingCat.scope,
+        customCategoryCountRemaining,
+      });
       setDeletingCat(null);
       toast.success("Category deleted");
     } catch {
@@ -251,12 +284,14 @@ export function CategoryManager() {
         <div>
           <h4 className="text-sm font-medium text-muted-foreground mb-2">Expense Categories</h4>
           <div className="rounded-lg border px-4">
+            {/* eslint-disable-next-line react-hooks/static-components -- existing inline component */}
             <CategoryList items={expense} />
           </div>
         </div>
         <div>
           <h4 className="text-sm font-medium text-muted-foreground mb-2">Income Categories</h4>
           <div className="rounded-lg border px-4">
+            {/* eslint-disable-next-line react-hooks/static-components -- existing inline component */}
             <CategoryList items={income} />
           </div>
         </div>

@@ -54,6 +54,16 @@ export interface HealthScore {
   components: HealthScoreComponent[];
 }
 
+/** Only present in HealthScore.components when the workspace has budgets. */
+export const BUDGET_ADHERENCE_LABEL = "Budget adherence";
+
+export function healthScoreLabel(score: number): string {
+  if (score >= 80) return "Excellent";
+  if (score >= 60) return "Good";
+  if (score >= 40) return "Fair";
+  return "Needs attention";
+}
+
 function monthExpensesByCategory(transactions: Transaction[], monthOf: Date): Map<string, number> {
   const start = startOfMonth(monthOf);
   const end = endOfMonth(monthOf);
@@ -242,7 +252,7 @@ export function computeHealthScore(
     ).length;
     const budgetPoints = Math.round((withinLimit / budgets.length) * weights.budgets);
     components.push({
-      label: "Budget adherence",
+      label: BUDGET_ADHERENCE_LABEL,
       points: budgetPoints,
       maxPoints: weights.budgets,
       detail: `${withinLimit} of ${budgets.length} budgets within limit`,

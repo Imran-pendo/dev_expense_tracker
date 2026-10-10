@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AppNav } from "./app-nav";
 import { QuickAddPalette } from "@/features/quick-add/components/quick-add-palette";
 import { QuickAddTrigger } from "@/features/quick-add/components/quick-add-trigger";
+import type { QuickAddOpenMethod } from "@/features/quick-add/hooks/use-quick-add";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -10,20 +11,24 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children, title, actions }: AppLayoutProps) {
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  // openMethod is kept with `open` so the shortcut's toggle can record it.
+  const [quickAdd, setQuickAdd] = useState<{ open: boolean; openMethod: QuickAddOpenMethod }>({
+    open: false,
+    openMethod: "button",
+  });
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
       // The browser focuses its own search bar on Cmd/Ctrl+K otherwise.
       e.preventDefault();
-      setQuickAddOpen((open) => {
+      setQuickAdd((prev) => {
         // Don't open on top of another dialog (form, alert) — stacked dialogs
         // fight over focus. Closing via the shortcut is always allowed.
-        if (!open && document.querySelector('[data-slot="dialog-content"], [data-slot="alert-dialog-content"]')) {
-          return open;
+        if (!prev.open && document.querySelector('[data-slot="dialog-content"], [data-slot="alert-dialog-content"]')) {
+          return prev;
         }
-        return !open;
+        return prev.open ? { ...prev, open: false } : { open: true, openMethod: "keyboard_shortcut" };
       });
     }
     window.addEventListener("keydown", onKeyDown);
@@ -41,7 +46,7 @@ export function AppLayout({ children, title, actions }: AppLayoutProps) {
             {title}
           </h1>
           <div className="flex items-center gap-2">
-            <QuickAddTrigger onClick={() => setQuickAddOpen(true)} />
+            <QuickAddTrigger onClick={() => setQuickAdd({ open: true, openMethod: "button" })} />
             {actions}
           </div>
         </div>
@@ -52,7 +57,11 @@ export function AppLayout({ children, title, actions }: AppLayoutProps) {
         </main>
       </div>
 
-      <QuickAddPalette open={quickAddOpen} onOpenChange={setQuickAddOpen} />
+      <QuickAddPalette
+        open={quickAdd.open}
+        openMethod={quickAdd.openMethod}
+        onOpenChange={(open) => setQuickAdd((prev) => ({ ...prev, open }))}
+      />
     </div>
   );
 }

@@ -26,6 +26,22 @@ export interface BotProgress {
 
 export type LogFn = (p: BotProgress) => void;
 
+export interface BotRunSummary {
+  usersCreated: number;
+  /** Outcome counts per action name, e.g. { addTransaction: { succeeded: 3, failed: 1 } }. */
+  actionResults: Record<string, { succeeded: number; failed: number }>;
+}
+
+export function createBotRunSummary(): BotRunSummary {
+  return { usersCreated: 0, actionResults: {} };
+}
+
+function recordActionResult(summary: BotRunSummary, actionName: string, outcome: "succeeded" | "failed") {
+  const counts = summary.actionResults[actionName] ?? { succeeded: 0, failed: 0 };
+  counts[outcome] += 1;
+  summary.actionResults[actionName] = counts;
+}
+
 interface BotState {
   isLoggedIn: boolean;
   hasWorkspace: boolean;
@@ -583,12 +599,15 @@ const ACTIONS: BotAction[] = [
 
 // ── main entry point ──────────────────────────────────────────────────────────
 
+// Resolves with the run summary. runBot throws when stopped or on a fatal
+// error, so pass `summary` to keep the partial results in those cases.
 export async function runBot(
   iframe: HTMLIFrameElement,
   config: BotConfig,
   log: LogFn,
-  abortRef: React.MutableRefObject<boolean>
-): Promise<void> {
+  abortRef: React.MutableRefObject<boolean>,
+  summary: BotRunSummary = createBotRunSummary()
+): Promise<BotRunSummary> {
   const state: BotState = {
     isLoggedIn: false,
     hasWorkspace: false,
@@ -622,10 +641,14 @@ export async function runBot(
 
     try {
       await action.run(iframe, state, log, abortRef);
+      recordActionResult(summary, action.name, "succeeded");
     } catch (err) {
       if (err instanceof AbortError) throw err;
+      recordActionResult(summary, action.name, "failed");
       const msg = err instanceof Error ? err.message : String(err);
       log({ type: "error", message: `✗ ${action.name} failed: ${msg}` });
+    } finally {
+      summary.usersCreated = state.users.length;
     }
 
     checkAbort(abortRef);
@@ -633,4 +656,5 @@ export async function runBot(
   }
 
   log({ type: "done", message: `★ Bot finished — ${config.totalActions} actions, ${state.users.length} user(s) created` });
+  return summary;
 }

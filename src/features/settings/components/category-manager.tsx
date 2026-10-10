@@ -22,7 +22,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { changedFields, track } from "@/lib/analytics";
+import { getBudgetsByWorkspaceId } from "@/lib/db/repositories/budgets.repo";
 import { createCategory, deleteCategory, updateCategory } from "@/lib/db/repositories/categories.repo";
+import { getTransactionsByWorkspaceId } from "@/lib/db/repositories/transactions.repo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
 import { useCategories } from "../hooks/use-settings";
 import type { Category, CategoryScope } from "@/types";
@@ -142,6 +145,62 @@ function CategoryFormDialog({ open, defaultValues, onSubmit, onCancel }: Categor
   );
 }
 
+interface CategoryListProps {
+  items: Category[];
+  onEdit: (category: Category) => void;
+  onDelete: (category: Category) => void;
+}
+
+function CategoryList({ items, onEdit, onDelete }: CategoryListProps) {
+  return (
+    <div className="flex flex-col">
+      {items.map((cat, idx) => (
+        <div key={cat.id}>
+          <div className="flex items-center justify-between py-2.5">
+            <div className="flex items-center gap-2.5">
+              <span className="size-3 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+              <span className="text-sm">{cat.name}</span>
+              {cat.isDefault && (
+                <Badge variant="secondary" className="text-xs">Default</Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" className="size-7" onClick={() => onEdit(cat)}>
+                <Pencil className="size-3.5" />
+                <span className="sr-only">Edit</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 text-destructive hover:text-destructive"
+                onClick={() => onDelete(cat)}
+                disabled={cat.isDefault}
+              >
+                <Trash2 className="size-3.5" />
+                <span className="sr-only">Delete</span>
+              </Button>
+            </div>
+          </div>
+          {idx < items.length - 1 && <Separator />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Deleting a category doesn't cascade: its transactions become "Uncategorized"
+// and its budget is orphaned.
+async function getCategoryUsage(workspaceId: string, categoryId: string) {
+  const [transactions, budgets] = await Promise.all([
+    getTransactionsByWorkspaceId(workspaceId),
+    getBudgetsByWorkspaceId(workspaceId),
+  ]);
+  return {
+    transactionCount: transactions.filter((t) => t.categoryId === categoryId).length,
+    hasBudget: budgets.some((b) => b.categoryId === categoryId),
+  };
+}
+
 export function CategoryManager() {
   const { workspace } = useAuthContext();
   const { categories, isLoading, reload } = useCategories(workspace!.id);
@@ -159,6 +218,16 @@ export function CategoryManager() {
       };
       await createCategory(cat);
       await reload();
+      // `categories` is still the list from before this add.
+      track("category_created", {
+        categoryId: cat.id,
+        categoryName: cat.name,
+        scope: cat.scope,
+        color: cat.color,
+        usedPresetColor: PRESET_COLORS.includes(cat.color.toLowerCase()),
+        customCategoryCount: categories.filter((c) => !c.isDefault).length + 1,
+        totalCategoryCount: categories.length + 1,
+      });
       setShowForm(false);
       toast.success("Category added");
     } catch {
@@ -169,8 +238,17 @@ export function CategoryManager() {
   async function handleEdit(values: CategoryFormValues) {
     if (!editingCat) return;
     try {
-      await updateCategory({ ...editingCat, ...values });
+      const updated: Category = { ...editingCat, ...values };
+      await updateCategory(updated);
       await reload();
+      track("category_updated", {
+        categoryId: updated.id,
+        categoryName: updated.name,
+        isDefault: updated.isDefault,
+        changedFields: changedFields(editingCat, updated, ["name", "color", "scope"]),
+        previousScope: editingCat.scope,
+        scope: updated.scope,
+      });
       setEditingCat(null);
       toast.success("Category updated");
     } catch {
@@ -181,8 +259,18 @@ export function CategoryManager() {
   async function handleDelete() {
     if (!deletingCat) return;
     try {
+      // Looked up before deleting; a failed lookup must not block the delete.
+      const usage = await getCategoryUsage(workspace!.id, deletingCat.id).catch(() => null);
       await deleteCategory(deletingCat.id);
       await reload();
+      track("category_deleted", {
+        categoryId: deletingCat.id,
+        categoryName: deletingCat.name,
+        scope: deletingCat.scope,
+        orphanedTransactionCount: usage?.transactionCount,
+        hadBudget: usage?.hasBudget,
+        remainingCategoryCount: categories.length - 1,
+      });
       setDeletingCat(null);
       toast.success("Category deleted");
     } catch {
@@ -201,43 +289,6 @@ export function CategoryManager() {
     );
   }
 
-  function CategoryList({ items }: { items: Category[] }) {
-    return (
-      <div className="flex flex-col">
-        {items.map((cat, idx) => (
-          <div key={cat.id}>
-            <div className="flex items-center justify-between py-2.5">
-              <div className="flex items-center gap-2.5">
-                <span className="size-3 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
-                <span className="text-sm">{cat.name}</span>
-                {cat.isDefault && (
-                  <Badge variant="secondary" className="text-xs">Default</Badge>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditingCat(cat)}>
-                  <Pencil className="size-3.5" />
-                  <span className="sr-only">Edit</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-destructive hover:text-destructive"
-                  onClick={() => setDeletingCat(cat)}
-                  disabled={cat.isDefault}
-                >
-                  <Trash2 className="size-3.5" />
-                  <span className="sr-only">Delete</span>
-                </Button>
-              </div>
-            </div>
-            {idx < items.length - 1 && <Separator />}
-          </div>
-        ))}
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex justify-end">
@@ -251,13 +302,13 @@ export function CategoryManager() {
         <div>
           <h4 className="text-sm font-medium text-muted-foreground mb-2">Expense Categories</h4>
           <div className="rounded-lg border px-4">
-            <CategoryList items={expense} />
+            <CategoryList items={expense} onEdit={setEditingCat} onDelete={setDeletingCat} />
           </div>
         </div>
         <div>
           <h4 className="text-sm font-medium text-muted-foreground mb-2">Income Categories</h4>
           <div className="rounded-lg border px-4">
-            <CategoryList items={income} />
+            <CategoryList items={income} onEdit={setEditingCat} onDelete={setDeletingCat} />
           </div>
         </div>
       </div>

@@ -1,14 +1,21 @@
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { differenceInSeconds, parseISO } from "date-fns";
 import { BpBox } from "@/shared/components/bp-box";
+import { identify, track } from "@/lib/analytics";
 import { createWorkspace } from "@/lib/db/repositories/workspaces.repo";
 import { seedDefaultCategories } from "@/lib/db/repositories/categories.repo";
 import { useAuthContext } from "@/features/auth/hooks/auth-context";
-import { WorkspaceSetupForm, type WorkspaceFormValues } from "../components/workspace-setup-form";
+import {
+  DEFAULT_CURRENCY,
+  DEFAULT_LOCALE,
+  WorkspaceSetupForm,
+  type WorkspaceFormValues,
+} from "../components/workspace-setup-form";
 import type { Workspace } from "@/types";
 
 export function WorkspaceSetupPage() {
-  const { user, setActiveWorkspace } = useAuthContext();
+  const { user, workspace: existingWorkspace, setActiveWorkspace } = useAuthContext();
   const navigate = useNavigate();
 
   async function handleSubmit(values: WorkspaceFormValues) {
@@ -23,8 +30,21 @@ export function WorkspaceSetupPage() {
         createdAt: new Date().toISOString(),
       };
       await createWorkspace(workspace);
-      await seedDefaultCategories(workspace.id);
+      const defaultCategoryCount = await seedDefaultCategories(workspace.id);
       setActiveWorkspace(workspace);
+      // The new workspace is the Pendo account for this and later events.
+      identify(user.id, workspace.id);
+      track("workspace_setup_completed", {
+        currency: workspace.currency,
+        locale: workspace.locale,
+        usedDefaultCurrency: workspace.currency === DEFAULT_CURRENCY,
+        usedDefaultLocale: workspace.locale === DEFAULT_LOCALE,
+        defaultCategoryCount,
+        secondsSinceSignUp: differenceInSeconds(new Date(), parseISO(user.createdAt)),
+        // Returning users can be routed here again after sign-in; flag their extra
+        // workspaces so they don't inflate onboarding completions.
+        hadExistingWorkspace: existingWorkspace !== null,
+      });
       navigate("/", { replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create workspace");

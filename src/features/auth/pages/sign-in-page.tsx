@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { errorMessageOf, track } from "@/lib/analytics";
 import { BpBox } from "@/shared/components/bp-box";
 import { useAuthContext } from "../hooks/auth-context";
 import { SignInForm } from "../components/sign-in-form";
@@ -15,6 +16,8 @@ export function SignInPage() {
       navigate(hasWorkspace ? "/" : "/setup-workspace", { replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Sign in failed");
+      // Never include the entered username or password.
+      track("sign_in_failed", { errorMessage: errorMessageOf(err, "Sign in failed") });
     }
   }
 

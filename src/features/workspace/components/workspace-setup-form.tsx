@@ -15,6 +15,9 @@ const workspaceSchema = z.object({
 
 export type WorkspaceFormValues = z.infer<typeof workspaceSchema>;
 
+export const DEFAULT_CURRENCY = "USD";
+export const DEFAULT_LOCALE = "en-US";
+
 const CURRENCIES = [
   { code: "USD", label: "US Dollar (USD)" },
   { code: "EUR", label: "Euro (EUR)" },
@@ -50,7 +53,7 @@ export function WorkspaceSetupForm({ onSubmit }: WorkspaceSetupFormProps) {
     formState: { errors, isSubmitting },
   } = useForm<WorkspaceFormValues>({
     resolver: zodResolver(workspaceSchema),
-    defaultValues: { currency: "USD", locale: "en-US" },
+    defaultValues: { currency: DEFAULT_CURRENCY, locale: DEFAULT_LOCALE },
   });
 
   return (
